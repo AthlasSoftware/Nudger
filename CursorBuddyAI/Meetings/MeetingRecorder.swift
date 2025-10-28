@@ -7,7 +7,9 @@
 
 import Foundation
 import AVFoundation
+import ScreenCaptureKit
 import AppKit
+import Combine
 import os.log
 
 /// Records audio from both microphone and system audio during meetings
@@ -17,8 +19,17 @@ class MeetingRecorder: ObservableObject {
     @Published var isRecording = false
     @Published var currentMeeting: MeetingSession?
     
-    private var audioEngine: AVAudioEngine?
-    private var audioFile: AVAudioFile?
+    // For microphone recording
+    private var micEngine: AVAudioEngine?
+    private var micFile: AVAudioFile?
+    private var micURL: URL?
+    
+    // For system audio recording via ScreenCaptureKit
+    private var stream: SCStream?
+    private var streamOutput: SystemAudioCapture?
+    private var systemAudioURL: URL?
+    
+    // Recording metadata
     private var recordingURL: URL?
     private var startTime: Date?
     
@@ -29,9 +40,9 @@ class MeetingRecorder: ObservableObject {
         
         Log.app.info("Starting meeting recording: \(meetingTitle)")
         
-        // Request microphone permission
-        let permissionGranted = await requestMicrophonePermission()
-        guard permissionGranted else {
+        // Request permissions
+        let micPermission = await requestMicrophonePermission()
+        guard micPermission else {
             throw RecordingError.permissionDenied
         }
         
@@ -41,30 +52,29 @@ class MeetingRecorder: ObservableObject {
         
         try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
         
-        // Create unique filename
+        // Create unique filenames
         let timestamp = ISO8601DateFormatter().string(from: Date())
-        let filename = "\(timestamp)_\(meetingTitle.replacingOccurrences(of: " ", with: "_")).m4a"
-        recordingURL = recordingsDir.appendingPathComponent(filename)
+        let safeTitle = meetingTitle.replacingOccurrences(of: " ", with: "_")
         
-        // Setup audio engine
-        audioEngine = AVAudioEngine()
-        guard let engine = audioEngine else { throw RecordingError.setupFailed }
+        // Microphone file
+        micURL = recordingsDir.appendingPathComponent("\(timestamp)_\(safeTitle)_mic.m4a")
         
-        let inputNode = engine.inputNode
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        // System audio file
+        systemAudioURL = recordingsDir.appendingPathComponent("\(timestamp)_\(safeTitle)_system.m4a")
         
-        // Create audio file
-        guard let url = recordingURL else { throw RecordingError.setupFailed }
-        audioFile = try AVAudioFile(forWriting: url, settings: recordingFormat.settings)
+        // Final merged file
+        recordingURL = recordingsDir.appendingPathComponent("\(timestamp)_\(safeTitle).m4a")
         
-        // Install tap on microphone input
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] buffer, _ in
-            guard let self = self, let audioFile = self.audioFile else { return }
-            try? audioFile.write(from: buffer)
+        // Start microphone recording
+        try startMicrophoneRecording()
+        
+        // Try to start system audio recording (optional - falls back to mic only if fails)
+        do {
+            try await startSystemAudioRecording()
+        } catch {
+            Log.app.warning("System audio recording failed (will use mic only): \(error)")
+            // Continue with mic-only recording
         }
-        
-        // Start engine
-        try engine.start()
         
         // Update state
         startTime = Date()
@@ -72,20 +82,107 @@ class MeetingRecorder: ObservableObject {
         currentMeeting = MeetingSession(
             title: meetingTitle,
             startTime: Date(),
-            recordingURL: url
+            recordingURL: recordingURL!
         )
         
-        Log.app.info("✓ Meeting recording started")
+        Log.app.info("✓ Recording started (mic\(self.stream != nil ? " + system audio" : " only"))")
+    }
+    
+    private func startMicrophoneRecording() throws {
+        micEngine = AVAudioEngine()
+        guard let engine = micEngine else { throw RecordingError.setupFailed }
+        
+        let inputNode = engine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
+        
+        // Create audio file for microphone
+        guard let url = micURL else { throw RecordingError.setupFailed }
+        micFile = try AVAudioFile(forWriting: url, settings: recordingFormat.settings)
+        
+        // Install tap on microphone input
+        inputNode.installTap(onBus: 0, bufferSize: 4096, format: recordingFormat) { [weak self] buffer, _ in
+            guard let self = self, let audioFile = self.micFile else { return }
+            try? audioFile.write(from: buffer)
+        }
+        
+        // Start engine
+        try engine.start()
+        Log.app.info("Microphone recording started")
+    }
+    
+    private func startSystemAudioRecording() async throws {
+        // Request screen recording permission (needed for system audio)
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+        
+        guard let display = content.displays.first else {
+            throw RecordingError.setupFailed
+        }
+        
+        // Configure to capture system audio only (no video)
+        let filter = SCContentFilter(display: display, excludingWindows: [])
+        
+        let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true // Don't capture our own app's audio
+        streamConfig.sampleRate = 48000
+        streamConfig.channelCount = 2
+        
+        // No video capture
+        streamConfig.width = 1
+        streamConfig.height = 1
+        streamConfig.minimumFrameInterval = CMTime(value: 1, timescale: 1)
+        
+        // Create stream output handler
+        streamOutput = SystemAudioCapture(outputURL: systemAudioURL!)
+        
+        // Create and start stream
+        stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
+        try stream?.addStreamOutput(streamOutput!, type: .audio, sampleHandlerQueue: DispatchQueue(label: "com.cursorbuddy.audioCapture"))
+        try await stream?.startCapture()
+        
+        Log.app.info("✓ System audio recording started")
     }
     
     func stopRecording() async throws -> MeetingSession? {
-        guard isRecording, let engine = audioEngine else { return nil }
+        guard isRecording else { return nil }
         
         Log.app.info("Stopping meeting recording...")
         
-        // Stop recording
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        // Stop microphone recording
+        if let engine = micEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            engine.stop()
+        }
+        micFile = nil
+        
+        // Stop system audio recording
+        if let stream = stream {
+            try? await stream.stopCapture()
+        }
+        streamOutput = nil
+        stream = nil
+        
+        // Wait for file system to sync
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+        
+        // Merge the two audio files if we have both, otherwise use mic only
+        var finalAudioURL: URL?
+        if let micURL = micURL, let sysURL = systemAudioURL, 
+           FileManager.default.fileExists(atPath: sysURL.path),
+           let outputURL = recordingURL {
+            do {
+                finalAudioURL = try await mergeAudioFiles(microphoneURL: micURL, systemURL: sysURL, outputURL: outputURL)
+                Log.app.info("✓ Audio files merged successfully")
+            } catch {
+                Log.app.error("Failed to merge audio files: \(error)")
+                // Fall back to just microphone
+                finalAudioURL = micURL
+            }
+        } else if let micURL = micURL {
+            // Only microphone recording available
+            finalAudioURL = micURL
+            Log.app.info("Using microphone-only recording")
+        }
         
         // Update session
         if var session = currentMeeting {
@@ -93,8 +190,33 @@ class MeetingRecorder: ObservableObject {
             session.duration = Date().timeIntervalSince(session.startTime)
             
             // Generate transcript using Whisper API
-            if let url = recordingURL {
-                session.transcript = try? await transcribeAudio(url: url)
+            if let url = finalAudioURL {
+                // Verify file exists and has data
+                if FileManager.default.fileExists(atPath: url.path) {
+                    do {
+                        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+                        let fileSize = attributes[.size] as? Int64 ?? 0
+                        
+                        Log.app.info("Audio file size: \(fileSize) bytes")
+                        
+                        if fileSize < 1000 {
+                            Log.app.warning("Audio file too small (\(fileSize) bytes), skipping transcription")
+                            session.transcript = nil
+                        } else if session.duration < 1.0 {
+                            Log.app.warning("Recording too short (\(session.duration)s), skipping transcription")
+                            session.transcript = nil
+                        } else {
+                            session.transcript = try await transcribeAudio(url: url)
+                            Log.app.info("✓ Transcription successful: \(session.transcript?.prefix(100) ?? "empty")")
+                        }
+                    } catch {
+                        Log.app.error("Failed to transcribe audio: \(error.localizedDescription)")
+                        session.transcript = nil
+                    }
+                } else {
+                    Log.app.error("Audio file does not exist at: \(url.path)")
+                    session.transcript = nil
+                }
             }
             
             isRecording = false
@@ -109,11 +231,55 @@ class MeetingRecorder: ObservableObject {
         return nil
     }
     
+    // MARK: - Audio Merging
+    
+    private func mergeAudioFiles(microphoneURL: URL, systemURL: URL, outputURL: URL) async throws -> URL {
+        let composition = AVMutableComposition()
+        
+        // Load both audio files
+        let micAsset = AVURLAsset(url: microphoneURL)
+        let sysAsset = AVURLAsset(url: systemURL)
+        
+        // Get audio tracks
+        guard let micTrack = try await micAsset.loadTracks(withMediaType: .audio).first,
+              let sysTrack = try await sysAsset.loadTracks(withMediaType: .audio).first else {
+            throw RecordingError.setupFailed
+        }
+        
+        // Add tracks to composition
+        let compositionMicTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        let compositionSysTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+        
+        let micDuration = try await micAsset.load(.duration)
+        let sysDuration = try await sysAsset.load(.duration)
+        _ = max(micDuration, sysDuration)  // Not used but kept for potential future use
+        
+        try compositionMicTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: micDuration), of: micTrack, at: .zero)
+        try compositionSysTrack?.insertTimeRange(CMTimeRange(start: .zero, duration: sysDuration), of: sysTrack, at: .zero)
+        
+        // Export merged audio
+        guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetAppleM4A) else {
+            throw RecordingError.setupFailed
+        }
+        
+        exportSession.outputURL = outputURL
+        exportSession.outputFileType = .m4a
+        
+        await exportSession.export()
+        
+        if exportSession.status == .completed {
+            return outputURL
+        } else {
+            throw RecordingError.setupFailed
+        }
+    }
+    
     // MARK: - Transcription
     
     private func transcribeAudio(url: URL) async throws -> String {
         // Use OpenAI Whisper API to transcribe
-        guard let apiKey = Config.openAIKey else {
+        let apiKey = Config.openAIAPIKey
+        guard apiKey != "YOUR_API_KEY_HERE" else {
             throw RecordingError.missingAPIKey
         }
         

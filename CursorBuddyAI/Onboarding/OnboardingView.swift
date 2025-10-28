@@ -7,6 +7,9 @@
 
 import SwiftUI
 import AppKit
+import AVFoundation
+import ScreenCaptureKit
+import os.log
 
 /// Onboarding flow for first-time setup
 struct OnboardingView: View {
@@ -14,6 +17,7 @@ struct OnboardingView: View {
     @ObservedObject var manager: OnboardingManager
     @ObservedObject var buddyController: BuddyController
     @ObservedObject var bubbleController: BubbleController
+    @ObservedObject var settings: SettingsStore
     
     @State private var openAIKey: String = ""
     @State private var braveKey: String = ""
@@ -67,9 +71,29 @@ struct OnboardingView: View {
                 case .accessibility:
                     AccessibilityStep(onContinue: {
                         withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
-                            manager.currentStep = .apiKeys
+                            manager.currentStep = .microphone
                         }
                     })
+                    
+                case .microphone:
+                    MicrophoneStep(
+                        settings: settings,
+                        onContinue: {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                manager.currentStep = .screenRecording
+                            }
+                        }
+                    )
+                    
+                case .screenRecording:
+                    ScreenRecordingStep(
+                        settings: settings,
+                        onContinue: {
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.8)) {
+                                manager.currentStep = .apiKeys
+                            }
+                        }
+                    )
                     
                 case .apiKeys:
                     APIKeysStep(
@@ -163,6 +187,10 @@ struct OnboardingView: View {
             message = "hey! i'm nudger, your new desk buddy"
         case .accessibility:
             message = "i need permission to see what you're working on"
+        case .microphone:
+            message = "i can record your voice in meetings"
+        case .screenRecording:
+            message = "this lets me hear other people in meetings too"
         case .apiKeys:
             message = "almost there! just need some api keys"
         case .complete:
@@ -265,6 +293,21 @@ struct WelcomeStep: View {
                     .font(.system(size: 16, weight: .regular, design: .rounded))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
+                
+                // Built with ❤️ by Athlas.io
+                Link(destination: URL(string: "https://athlas.io")!) {
+                    HStack(spacing: 4) {
+                        Text("built with")
+                            .font(.system(size: 12, weight: .regular, design: .rounded))
+                        Text("❤️")
+                            .font(.system(size: 10))
+                        Text("by athlas.io")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                    }
+                    .foregroundColor(.secondary.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 4)
             }
             
             Spacer()
@@ -475,6 +518,527 @@ struct AccessibilityStep: View {
                 timer.invalidate()
             }
         }
+    }
+}
+
+// MARK: - Microphone Step
+
+struct MicrophoneStep: View {
+    @ObservedObject var settings: SettingsStore
+    let onContinue: () -> Void
+    
+    @State private var isChecking = true
+    @State private var hasAccess = false
+    @State private var showSuccess = false
+    @State private var timer: Timer?
+    
+    var body: some View {
+        VStack(spacing: 40) {
+            Spacer()
+            
+            // Status icon
+            ZStack {
+                if hasAccess {
+                    // Success state
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color.green.opacity(0.25),
+                                        Color.green.opacity(0.0)
+                                    ],
+                                    center: .center,
+                                    startRadius: 50,
+                                    endRadius: 100
+                                )
+                            )
+                            .frame(width: 200, height: 200)
+                            .scaleEffect(showSuccess ? 1.0 : 0.8)
+                            .opacity(showSuccess ? 1.0 : 0.0)
+                        
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.green.opacity(0.95), Color.green.opacity(0.7)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 100, height: 100)
+                            .shadow(color: Color.green.opacity(0.4), radius: 25, x: 0, y: 12)
+                            .overlay(
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 48, weight: .semibold))
+                                    .foregroundColor(.white)
+                            )
+                            .scaleEffect(showSuccess ? 1.0 : 0.5)
+                            .opacity(showSuccess ? 1.0 : 0.0)
+                    }
+                } else {
+                    // Waiting state
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.purple.opacity(0.95), Color.purple.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 100, height: 100)
+                        .shadow(color: Color.purple.opacity(0.4), radius: 25, x: 0, y: 12)
+                        .overlay(
+                            Image(systemName: "mic.fill")
+                                .font(.system(size: 40, weight: .light))
+                                .foregroundColor(.white.opacity(0.95))
+                        )
+                }
+            }
+            .frame(height: 120)
+            .onChange(of: hasAccess) { _, newValue in
+                if newValue {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
+                        showSuccess = true
+                    }
+                }
+            }
+            
+            // Title & description
+            VStack(spacing: 12) {
+                Text(hasAccess ? "perfect!" : "microphone permission")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.primary, Color.primary.opacity(0.7)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Text(hasAccess
+                    ? "i can now record meeting notes for you"
+                    : "i'll ask the system for permission\nso i can record and transcribe meetings"
+                )
+                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+            }
+            
+            Spacer()
+            
+            // Action buttons
+            VStack(spacing: 16) {
+                if hasAccess {
+                    Button(action: {
+                        // Save that meeting notes are enabled
+                        settings.meetingNotesEnabled = true
+                        onContinue()
+                    }) {
+                        HStack(spacing: 10) {
+                            Text("continue")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.green.opacity(0.95), Color.green.opacity(0.8)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .shadow(color: Color.green.opacity(0.4), radius: 16, x: 0, y: 8)
+                        )
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                } else {
+                    VStack(spacing: 12) {
+                        Button(action: {
+                            // Request microphone permission
+                            requestMicrophonePermission()
+                        }) {
+                            HStack(spacing: 10) {
+                                Text("grant permission")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                
+                                Image(systemName: "mic.fill")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color.purple.opacity(0.95), Color.purple.opacity(0.8)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .shadow(color: Color.purple.opacity(0.4), radius: 16, x: 0, y: 8)
+                            )
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                    }
+                    
+                    Spacer()
+                        .frame(height: 8)
+                    
+                    // Skip button
+                    Button(action: {
+                        // Save that meeting notes are disabled
+                        settings.meetingNotesEnabled = false
+                        onContinue()
+                    }) {
+                        Text("skip (no meeting notes)")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 50)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            startCheckingAccess()
+        }
+        .onDisappear {
+            stopTimer()
+        }
+    }
+    
+    private func requestMicrophonePermission() {
+        Log.app.info("🎤 Requesting microphone permission...")
+        
+        // Check current authorization status
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        Log.app.info("Current microphone status: \(String(describing: status.rawValue))")
+        
+        switch status {
+        case .authorized:
+            // Already authorized
+            DispatchQueue.main.async {
+                self.hasAccess = true
+                Log.app.info("✓ Microphone already authorized")
+            }
+            
+        case .notDetermined:
+            // Request permission - this will show the system dialog
+            AVCaptureDevice.requestAccess(for: .audio) { granted in
+                Log.app.info("Microphone permission result: \(granted)")
+                DispatchQueue.main.async {
+                    if granted {
+                        self.hasAccess = true
+                        Log.app.info("✓ Microphone access granted")
+                    } else {
+                        Log.app.warning("✗ Microphone access denied")
+                    }
+                }
+            }
+            
+        case .denied, .restricted:
+            // User has denied or it's restricted - open System Settings
+            Log.app.info("Permission denied/restricted, opening System Settings...")
+            openSystemSettings()
+            
+        @unknown default:
+            break
+        }
+    }
+    
+    private func openSystemSettings() {
+        Log.app.info("Opening System Settings for microphone permissions...")
+        
+        // Try to open microphone settings directly
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    private func startCheckingAccess() {
+        // Check initial status using AVCaptureDevice (macOS)
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        hasAccess = (status == .authorized)
+        
+        // Poll for changes
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] t in
+            let status = AVCaptureDevice.authorizationStatus(for: .audio)
+            let newAccess = status == .authorized
+            if newAccess != hasAccess {
+                hasAccess = newAccess
+            }
+            if hasAccess {
+                t.invalidate()
+                timer = nil
+            }
+        }
+    }
+    
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
+    }
+}
+
+// MARK: - Screen Recording Step
+
+struct ScreenRecordingStep: View {
+    @ObservedObject var settings: SettingsStore
+    let onContinue: () -> Void
+    
+    @State private var hasAccess = false
+    @State private var showSuccess = false
+    @State private var timer: Timer?
+    
+    var body: some View {
+        VStack(spacing: 40) {
+            Spacer()
+            
+            // Status icon
+            ZStack {
+                if hasAccess {
+                    // Success state
+                    ZStack {
+                        Circle()
+                            .fill(
+                                RadialGradient(
+                                    colors: [
+                                        Color.green.opacity(0.25),
+                                        Color.green.opacity(0.0)
+                                    ],
+                                    center: .center,
+                                    startRadius: 50,
+                                    endRadius: 100
+                                )
+                            )
+                            .frame(width: 200, height: 200)
+                            .scaleEffect(showSuccess ? 1.0 : 0.8)
+                            .opacity(showSuccess ? 1.0 : 0.0)
+                        
+                        Circle()
+                            .fill(
+                                LinearGradient(
+                                    colors: [Color.green.opacity(0.95), Color.green.opacity(0.7)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                )
+                            )
+                            .frame(width: 100, height: 100)
+                            .shadow(color: Color.green.opacity(0.4), radius: 25, x: 0, y: 12)
+                            .overlay(
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 48, weight: .semibold))
+                                    .foregroundColor(.white)
+                            )
+                            .scaleEffect(showSuccess ? 1.0 : 0.5)
+                            .opacity(showSuccess ? 1.0 : 0.0)
+                    }
+                } else {
+                    // Waiting state
+                    Circle()
+                        .fill(
+                            LinearGradient(
+                                colors: [Color.blue.opacity(0.95), Color.blue.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                        .frame(width: 100, height: 100)
+                        .shadow(color: Color.blue.opacity(0.4), radius: 25, x: 0, y: 12)
+                        .overlay(
+                            Image(systemName: "rectangle.on.rectangle")
+                                .font(.system(size: 40, weight: .light))
+                                .foregroundColor(.white.opacity(0.95))
+                        )
+                }
+            }
+            .frame(height: 120)
+            .onChange(of: hasAccess) { _, newValue in
+                if newValue {
+                    withAnimation(.spring(response: 0.6, dampingFraction: 0.6)) {
+                        showSuccess = true
+                    }
+                }
+            }
+            
+            // Title & description
+            VStack(spacing: 12) {
+                Text(hasAccess ? "perfect!" : "screen recording permission")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .foregroundStyle(
+                        LinearGradient(
+                            colors: [Color.primary, Color.primary.opacity(0.7)],
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                    )
+                
+                Text(hasAccess
+                    ? "i can now capture system audio in meetings"
+                    : "needed to hear other participants\nwhen recording meetings with headphones"
+                )
+                .font(.system(size: 15, weight: .regular, design: .rounded))
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+            }
+            
+            Spacer()
+            
+            // Action buttons
+            VStack(spacing: 16) {
+                if hasAccess {
+                    Button(action: {
+                        onContinue()
+                    }) {
+                        HStack(spacing: 10) {
+                            Text("continue")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            
+                            Image(systemName: "arrow.right")
+                                .font(.system(size: 14, weight: .semibold))
+                        }
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16)
+                                .fill(
+                                    LinearGradient(
+                                        colors: [Color.green.opacity(0.95), Color.green.opacity(0.8)],
+                                        startPoint: .leading,
+                                        endPoint: .trailing
+                                    )
+                                )
+                                .shadow(color: Color.green.opacity(0.4), radius: 16, x: 0, y: 8)
+                        )
+                    }
+                    .buttonStyle(ScaleButtonStyle())
+                } else {
+                    VStack(spacing: 12) {
+                        Button(action: {
+                            // Request screen recording permission
+                            requestScreenRecordingPermission()
+                        }) {
+                            HStack(spacing: 10) {
+                                Text("grant permission")
+                                    .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                
+                                Image(systemName: "rectangle.on.rectangle")
+                                    .font(.system(size: 14, weight: .semibold))
+                            }
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Color.blue.opacity(0.95), Color.blue.opacity(0.8)],
+                                            startPoint: .leading,
+                                            endPoint: .trailing
+                                        )
+                                    )
+                                    .shadow(color: Color.blue.opacity(0.4), radius: 16, x: 0, y: 8)
+                            )
+                        }
+                        .buttonStyle(ScaleButtonStyle())
+                    }
+                    
+                    Spacer()
+                        .frame(height: 8)
+                    
+                    // Skip button
+                    Button(action: {
+                        // Continue without screen recording (only mic audio)
+                        onContinue()
+                    }) {
+                        Text("skip (microphone only)")
+                            .font(.system(size: 14, weight: .medium, design: .rounded))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 50)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            startCheckingAccess()
+        }
+        .onDisappear {
+            stopTimer()
+        }
+    }
+    
+    private func requestScreenRecordingPermission() {
+        Log.app.info("🎬 Requesting screen recording permission...")
+        
+        // Request permission by trying to get screen content
+        Task {
+            do {
+                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                Log.app.info("✓ Screen recording permission granted, found \(content.displays.count) displays")
+                
+                await MainActor.run {
+                    hasAccess = true
+                }
+            } catch {
+                Log.app.error("Failed to request screen recording permission: \(error)")
+                
+                // If permission denied, open System Settings
+                await MainActor.run {
+                    openSystemSettings()
+                }
+            }
+        }
+    }
+    
+    private func openSystemSettings() {
+        Log.app.info("Opening System Settings for screen recording permissions...")
+        
+        // Open Screen Recording settings
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+    
+    private func startCheckingAccess() {
+        // Poll for screen recording access
+        timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] currentTimer in
+            guard let self = self else { return }
+            
+            // Try to check if we have access by attempting to get screen content
+            Task { @MainActor [weak self, weak currentTimer] in
+                guard let self = self else { return }
+                do {
+                    _ = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+                    if !self.hasAccess {
+                        self.hasAccess = true
+                        currentTimer?.invalidate()
+                        self.timer = nil
+                    }
+                } catch {
+                    // No access yet
+                }
+            }
+        }
+    }
+    
+    private func stopTimer() {
+        timer?.invalidate()
+        timer = nil
     }
 }
 
@@ -707,10 +1271,11 @@ struct APIKeysStep: View {
     let buddyController = BuddyController(settings: settings)
     let bubbleController = BubbleController(buddyController: buddyController)
     
-    return OnboardingView(
+    OnboardingView(
         manager: OnboardingManager(),
         buddyController: buddyController,
-        bubbleController: bubbleController
+        bubbleController: bubbleController,
+        settings: settings
     )
 }
 

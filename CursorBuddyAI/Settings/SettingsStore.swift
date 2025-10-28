@@ -19,6 +19,7 @@ class SettingsStore: ObservableObject {
     @AppStorage("frequency") var frequency: Double = 0.2
     @AppStorage("playfulTone") var playfulTone: Bool = true
     @AppStorage("devMode") var devMode: Bool = false
+    @AppStorage("meetingNotesEnabled") var meetingNotesEnabled: Bool = false
     
     // MARK: - Buddy Position
     

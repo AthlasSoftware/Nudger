@@ -7,6 +7,7 @@
 
 import Foundation
 import AppKit
+import Combine
 import os.log
 
 /// Detects when user is in a Teams meeting
@@ -22,7 +23,7 @@ class MeetingDetector: ObservableObject {
     
     func startMonitoring() {
         timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.checkForMeeting()
             }
         }
@@ -37,25 +38,64 @@ class MeetingDetector: ObservableObject {
     }
     
     private func checkForMeeting() {
-        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        // Check all running apps for Teams meetings, not just frontmost
+        let runningApps = NSWorkspace.shared.runningApplications
         
-        let bundleId = app.bundleIdentifier ?? ""
-        let windowTitle = getWindowTitle() ?? ""
+        for app in runningApps {
+            guard let bundleId = app.bundleIdentifier,
+                  isTeamsApp(bundleId) else { continue }
+            
+            // Get Teams window titles
+            if let meetingTitle = getTeamsMeetingWindow(pid: app.processIdentifier) {
+                // Found an active meeting
+                if !isInMeeting {
+                    isInMeeting = true
+                    currentMeetingTitle = meetingTitle
+                    Log.app.info("📞 Teams meeting detected: \(meetingTitle)")
+                }
+                return
+            }
+        }
         
-        // Detect Teams meeting
-        let isTeamsMeeting = isTeamsApp(bundleId) && isMeetingWindow(windowTitle)
-        
-        if isTeamsMeeting && !isInMeeting {
-            // Meeting started
-            isInMeeting = true
-            currentMeetingTitle = extractMeetingTitle(from: windowTitle)
-            Log.app.info("📞 Teams meeting detected: \(self.currentMeetingTitle ?? "Untitled")")
-        } else if !isTeamsMeeting && isInMeeting {
-            // Meeting ended
+        // No meeting found
+        if isInMeeting {
             isInMeeting = false
             currentMeetingTitle = nil
             Log.app.info("Meeting ended")
         }
+    }
+    
+    private func getTeamsMeetingWindow(pid: pid_t) -> String? {
+        let appElement = AXUIElementCreateApplication(pid)
+        
+        var windowsRef: AnyObject?
+        let result = AXUIElementCopyAttributeValue(
+            appElement,
+            kAXWindowsAttribute as CFString,
+            &windowsRef
+        )
+        
+        guard result == .success,
+              let windows = windowsRef as? [AXUIElement] else {
+            return nil
+        }
+        
+        // Check all windows for meeting indicators
+        for window in windows {
+            var titleValue: AnyObject?
+            AXUIElementCopyAttributeValue(
+                window,
+                kAXTitleAttribute as CFString,
+                &titleValue
+            )
+            
+            if let title = titleValue as? String,
+               isMeetingWindow(title) {
+                return extractMeetingTitle(from: title)
+            }
+        }
+        
+        return nil
     }
     
     private func isTeamsApp(_ bundleId: String) -> Bool {
@@ -64,16 +104,49 @@ class MeetingDetector: ObservableObject {
     }
     
     private func isMeetingWindow(_ title: String) -> Bool {
+        let lowerTitle = title.lowercased()
+        
+        // Exclude non-meeting windows
+        let excludeKeywords = [
+            "chat |",
+            "calendar |",
+            "activity |",
+            "teams |",
+            "files |"
+        ]
+        
+        for keyword in excludeKeywords {
+            if lowerTitle.hasPrefix(keyword.lowercased()) {
+                return false
+            }
+        }
+        
+        // Look for actual meeting indicators
         let meetingKeywords = [
-            "meeting",
-            "call",
-            "| Microsoft Teams",
+            "meeting |",
+            "meeting -",
+            "call with",
+            "| meeting",
             "video call"
         ]
         
-        return meetingKeywords.contains { keyword in
-            title.lowercased().contains(keyword.lowercased())
+        for keyword in meetingKeywords {
+            if lowerTitle.contains(keyword.lowercased()) {
+                return true
+            }
         }
+        
+        // Also check if window title is very short and ends with "| Microsoft Teams"
+        // (this often indicates an active meeting window)
+        if lowerTitle.hasSuffix("| microsoft teams") {
+            let prefix = lowerTitle.replacingOccurrences(of: "| microsoft teams", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
+            // If prefix is just a name or short title (< 30 chars), likely a meeting
+            if prefix.count > 0 && prefix.count < 30 && !prefix.contains("|") {
+                return true
+            }
+        }
+        
+        return false
     }
     
     private func extractMeetingTitle(from windowTitle: String) -> String {

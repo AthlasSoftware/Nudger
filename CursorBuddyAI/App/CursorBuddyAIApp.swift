@@ -47,7 +47,8 @@ struct CursorBuddyAIApp: App {
             recorder: meetingRecorder,
             notesGenerator: notesGenerator,
             buddyController: buddyController,
-            bubbleController: bubbleController
+            bubbleController: bubbleController,
+            settings: settings
         )
         
         let scheduler = SuggestScheduler(
@@ -78,26 +79,39 @@ struct CursorBuddyAIApp: App {
     // MARK: - App Body
     
     var body: some Scene {
-        // Onboarding window (shown on first launch)
+        // Onboarding window (conditionally shown)
         Window("Nudger Setup", id: "onboarding") {
             if !onboardingManager.hasCompletedOnboarding {
                 OnboardingView(
                     manager: onboardingManager,
                     buddyController: buddyController,
-                    bubbleController: bubbleController
+                    bubbleController: bubbleController,
+                    settings: settings
                 )
+                    .frame(width: 500, height: 600)
+                    .background(Color.clear)
                     .onAppear {
                         // Configure window appearance
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                             if let window = NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" }) {
                                 window.isOpaque = false
                                 window.backgroundColor = .clear
-                                window.hasShadow = true
+                                window.hasShadow = false
                                 window.level = .floating
                                 window.isMovableByWindowBackground = true
+                                window.titlebarAppearsTransparent = true
+                                window.titleVisibility = .hidden
+                                window.styleMask.insert(.borderless)
+                                window.styleMask.remove(.titled)
+                                window.standardWindowButton(.closeButton)?.isHidden = true
+                                window.standardWindowButton(.miniaturizeButton)?.isHidden = true
+                                window.standardWindowButton(.zoomButton)?.isHidden = true
                             }
                         }
                     }
+            } else {
+                // Empty view when onboarding is complete
+                EmptyView()
             }
         }
         .windowStyle(.hiddenTitleBar)
@@ -173,109 +187,291 @@ struct MenuContent: View {
     @ObservedObject var scheduler: SuggestScheduler
     @ObservedObject var onboardingManager: OnboardingManager
     
+    @AppStorage("developerMode") private var developerMode = false
+    
     var body: some View {
-        // Active toggle
-        Toggle("Active", isOn: $settings.isActive)
-            .keyboardShortcut("a", modifiers: [.command])
-        
-        // Frequency slider
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Frequency")
-                .font(.caption)
-                .foregroundColor(.secondary)
-            
+        // Status section
+        Section {
             HStack {
-                Text("Rare")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                Circle()
+                    .fill(settings.isActive ? Color.green : Color.gray)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: settings.isActive ? .green.opacity(0.6) : .clear, radius: 4)
                 
-                Slider(value: $settings.frequency, in: 0...1)
+                Text(settings.isActive ? "Active" : "Inactive")
+                    .font(.system(size: 12, weight: .medium))
                 
-                Text("Often")
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
+                Spacer()
+                
+                Toggle("", isOn: $settings.isActive)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
         
         Divider()
         
-        // Dev mode toggle
-        Toggle("Developer Mode", isOn: $settings.devMode)
+        // Quick actions
+        Section("Actions") {
+            Button(action: { openNotesFolder() }) {
+                Label("Meeting Notes", systemImage: "doc.text.fill")
+            }
+            .keyboardShortcut("n", modifiers: [.command])
+            
+            Button(action: { /* TODO */ }) {
+                Label("Settings", systemImage: "gearshape.fill")
+            }
+            .keyboardShortcut(",", modifiers: [.command])
+        }
         
-        // Dev mode content
-        if settings.devMode {
+        Divider()
+        
+        // Suggestion settings
+        Section("Suggestions") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Frequency")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text(frequencyLabel)
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.accentColor)
+                }
+                
+                Slider(value: $settings.frequency, in: 0...1)
+                    .controlSize(.small)
+                
+                HStack {
+                    Text("Rare")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                    
+                    Spacer()
+                    
+                    Text("Often")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+        
+        // Developer mode toggle
+        Divider()
+        
+        Toggle("Developer Mode", isOn: $developerMode)
+            .font(.system(size: 12, weight: .medium))
+        
+        // Developer section
+        if developerMode {
             Divider()
             
-            Group {
-                Text("Debug Tools")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Button("Trigger suggestion now") {
-                    Task {
-                        await scheduler.triggerNow()
-                    }
+            Section("Developer") {
+                // Quick actions
+                Button(action: { 
+                    Task { await scheduler.triggerNow() }
+                }) {
+                    Label("Trigger Suggestion", systemImage: "sparkles")
                 }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
                 
-                Button("Reset buddy position") {
-                    buddyController.resetPosition()
+                Button(action: { buddyController.resetPosition() }) {
+                    Label("Reset Buddy Position", systemImage: "arrow.counterclockwise")
                 }
                 
-                Button("Reset onboarding") {
+                Button(action: { 
                     onboardingManager.resetOnboarding()
                     NSApp.windows.first(where: { $0.identifier?.rawValue == "onboarding" })?.makeKeyAndOrderFront(nil)
+                }) {
+                    Label("Reset Onboarding", systemImage: "arrow.uturn.backward")
                 }
-                
-                Divider()
-                
+            }
+            
+            Divider()
+            
+            Section("System Status") {
                 // Context info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Active Window")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    
-                    Text(contextService.currentContext.appName.isEmpty ? "—" : contextService.currentContext.appName)
-                        .font(.caption)
-                        .lineLimit(1)
-                    
-                    if !contextService.currentContext.windowTitle.isEmpty {
-                        Text(contextService.currentContext.windowTitle)
-                            .font(.caption2)
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Active Window")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
                             .foregroundColor(.secondary)
-                            .lineLimit(2)
+                        Spacer()
+                    }
+                    
+                    if !contextService.currentContext.appName.isEmpty {
+                        HStack(spacing: 4) {
+                            Circle()
+                                .fill(Color.blue)
+                                .frame(width: 4, height: 4)
+                            
+                            Text(contextService.currentContext.appName)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .lineLimit(1)
+                        }
+                        
+                        if !contextService.currentContext.windowTitle.isEmpty {
+                            Text(contextService.currentContext.windowTitle)
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                                .padding(.leading, 8)
+                        }
+                    } else {
+                        Text("—")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
                     }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+                .padding(.vertical, 2)
                 
                 Divider()
                 
-                // Accessibility status
-                if AccessibilityHelper.isTrusted {
-                    Label("Accessibility enabled", systemImage: "checkmark.circle.fill")
-                        .font(.caption)
-                        .foregroundColor(.green)
-                } else {
-                    Button("Request Accessibility") {
-                        AccessibilityHelper.requestAccessibility()
+                // Permissions status
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Permissions")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
                     }
-                    Button("Open System Settings") {
-                        AccessibilityHelper.openAccessibilitySettings()
+                    
+                    PermissionRow(
+                        name: "Accessibility",
+                        granted: AccessibilityHelper.isTrusted,
+                        action: {
+                            if !AccessibilityHelper.isTrusted {
+                                AccessibilityHelper.openAccessibilitySettings()
+                            }
+                        }
+                    )
+                    
+                    PermissionRow(
+                        name: "Microphone",
+                        granted: settings.meetingNotesEnabled,
+                        action: nil
+                    )
+                    
+                    PermissionRow(
+                        name: "Screen Recording",
+                        granted: checkScreenRecordingPermission(),
+                        action: {
+                            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                NSWorkspace.shared.open(url)
+                            }
+                        }
+                    )
+                }
+                .padding(.vertical, 2)
+                
+                Divider()
+                
+                // Scheduler info
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Scheduler")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    
+                    HStack {
+                        Text("Interval")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(String(format: "%.1fs", scheduler.currentInterval))
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.accentColor)
+                    }
+                    
+                    HStack {
+                        Text("Next tick")
+                            .font(.system(size: 9, design: .monospaced))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                        Text(scheduler.isRunning ? "running" : "stopped")
+                            .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                            .foregroundColor(scheduler.isRunning ? .green : .gray)
                     }
                 }
+                .padding(.vertical, 2)
             }
         }
         
         Divider()
         
         // Quit button
-        Button("Quit") {
+        Button("Quit Nudger") {
             NSApplication.shared.terminate(nil)
         }
         .keyboardShortcut("q", modifiers: [.command])
+    }
+    
+    private var frequencyLabel: String {
+        switch settings.frequency {
+        case 0..<0.25: return "RARE"
+        case 0.25..<0.5: return "LOW"
+        case 0.5..<0.75: return "MEDIUM"
+        default: return "HIGH"
+        }
+    }
+    
+    private func openNotesFolder() {
+        let recordingsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MeetingRecordings")
+        
+        if !FileManager.default.fileExists(atPath: recordingsDir.path) {
+            try? FileManager.default.createDirectory(at: recordingsDir, withIntermediateDirectories: true)
+        }
+        
+        NSWorkspace.shared.open(recordingsDir)
+    }
+    
+    private func checkScreenRecordingPermission() -> Bool {
+        // Simple heuristic - if we can't check async, assume false
+        return false
+    }
+}
+
+// MARK: - Permission Row
+
+struct PermissionRow: View {
+    let name: String
+    let granted: Bool
+    let action: (() -> Void)?
+    
+    var body: some View {
+        Button(action: {
+            action?()
+        }) {
+            HStack(spacing: 6) {
+                Circle()
+                    .fill(granted ? Color.green : Color.orange)
+                    .frame(width: 6, height: 6)
+                
+                Text(name)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.primary)
+                
+                Spacer()
+                
+                if granted {
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.green)
+                } else if action != nil {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 7, weight: .medium))
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(action == nil)
     }
 }
 

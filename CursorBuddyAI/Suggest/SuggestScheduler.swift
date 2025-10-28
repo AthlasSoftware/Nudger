@@ -99,6 +99,24 @@ class SuggestScheduler: ObservableObject {
             return
         }
         
+        // CRITICAL: Block when buddy menu is open
+        guard !buddyController.isMenuOpen else {
+            Log.scheduler.debug("Skipping tick (buddy menu is open)")
+            return
+        }
+        
+        // CRITICAL: Block when recording
+        guard !buddyController.isRecording else {
+            Log.scheduler.debug("Skipping tick (recording in progress)")
+            return
+        }
+        
+        // CRITICAL: Block when processing transcription/notes
+        guard !buddyController.isProcessing else {
+            Log.scheduler.debug("Skipping tick (processing in progress)")
+            return
+        }
+        
         // Check if active
         guard settings.isActive else {
             return

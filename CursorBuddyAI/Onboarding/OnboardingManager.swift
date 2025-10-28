@@ -13,36 +13,56 @@ import Combine
 @MainActor
 class OnboardingManager: ObservableObject {
     
-    @Published var hasCompletedOnboarding: Bool {
-        didSet {
-            UserDefaults.standard.set(hasCompletedOnboarding, forKey: "hasCompletedOnboarding")
-        }
-    }
+    @Published var hasCompletedOnboarding: Bool
     
     @Published var currentStep: OnboardingStep = .welcome
     
     init() {
-        // Default to false if key doesn't exist (first launch)
-        if UserDefaults.standard.object(forKey: "hasCompletedOnboarding") == nil {
-            self.hasCompletedOnboarding = false
+        // Check for completion marker file (persists across builds)
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let nudgerDir = appSupport.appendingPathComponent("Nudger")
+        let markerFile = nudgerDir.appendingPathComponent(".onboarding_complete")
+        
+        if fileManager.fileExists(atPath: markerFile.path) {
+            self.hasCompletedOnboarding = true
         } else {
-            self.hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
+            self.hasCompletedOnboarding = false
         }
     }
     
     func completeOnboarding() {
         hasCompletedOnboarding = true
+        
+        // Create persistent marker file
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let nudgerDir = appSupport.appendingPathComponent("Nudger")
+        let markerFile = nudgerDir.appendingPathComponent(".onboarding_complete")
+        
+        try? fileManager.createDirectory(at: nudgerDir, withIntermediateDirectories: true)
+        try? "completed".write(to: markerFile, atomically: true, encoding: .utf8)
     }
     
     func resetOnboarding() {
         hasCompletedOnboarding = false
         currentStep = .welcome
+        
+        // Remove marker file
+        let fileManager = FileManager.default
+        let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+        let nudgerDir = appSupport.appendingPathComponent("Nudger")
+        let markerFile = nudgerDir.appendingPathComponent(".onboarding_complete")
+        
+        try? fileManager.removeItem(at: markerFile)
     }
 }
 
 enum OnboardingStep {
     case welcome
     case accessibility
+    case microphone
+    case screenRecording
     case apiKeys
     case complete
 }
