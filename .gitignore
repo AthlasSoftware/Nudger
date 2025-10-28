@@ -1,0 +1,55 @@
+# Xcode
+*.xcuserstate
+*.xcuserdatad
+xcuserdata/
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
+
+# Build products
+build/
+*.app
+*.dSYM.zip
+*.dSYM
+
+# Environment files with secrets
+setup_env.sh
+.env
+*.local
+
+# Config file with API key
+CursorBuddyAI/Config.swift
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# SwiftPM
+.swiftpm/
+Packages/
+Package.resolved
+*.xcworkspace
+
+# CocoaPods
+Pods/
+*.xcworkspace
+
+# Temporary files
+*.swp
+*~
+.#*
+
+# Documentation builds
+docs/build/
+
