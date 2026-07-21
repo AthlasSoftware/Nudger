@@ -237,7 +237,7 @@ struct MenuContent: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
                     
-                    Text(contextService.currentContext.appName.isEmpty ? "—" : contextService.currentContext.appName)
+                    Text(contextService.currentContext.appName.isEmpty ? "-" : contextService.currentContext.appName)
                         .font(.caption)
                         .lineLimit(1)
                     

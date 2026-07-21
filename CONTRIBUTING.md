@@ -1,6 +1,6 @@
 # Contributing to Nudger
 
-Thanks for your interest in contributing! Nudger is a small, playful project — contributions of all sizes are welcome.
+Thanks for your interest in contributing! Nudger is a small, playful project - contributions of all sizes are welcome.
 
 ## Getting Started
 
@@ -9,7 +9,7 @@ Thanks for your interest in contributing! Nudger is a small, playful project —
    ```bash
    cp Nudger/Config.swift.template Nudger/Config.swift
    ```
-   `Config.swift` is gitignored — never commit real API keys.
+   `Config.swift` is gitignored - never commit real API keys.
 3. Open `Nudger.xcodeproj` in Xcode 15+ and build (⌘R).
 
 ## Guidelines

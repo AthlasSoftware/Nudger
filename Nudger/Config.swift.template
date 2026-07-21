@@ -22,7 +22,7 @@ enum Config {
     /// Optional: Override the OpenAI base URL (default: https://api.openai.com/v1)
     static let openAIBaseURL: String? = nil
 
-    /// OpenAI key as an optional — nil when unset (used by meeting transcription/notes)
+    /// OpenAI key as an optional - nil when unset (used by meeting transcription/notes)
     static var openAIKey: String? {
         openAIAPIKey.isEmpty ? nil : openAIAPIKey
     }
