@@ -1,0 +1,30 @@
+//
+//  Config.swift.template
+//  Nudger
+//
+//  Template for Config.swift
+//  Copy this file to Config.swift and add your actual API key
+//
+
+import Foundation
+
+enum Config {
+    /// Your OpenAI API key - GET ONE FROM: https://platform.openai.com/api-keys
+    static let openAIAPIKey = ""
+
+    /// Your Brave Search API key - GET FREE KEY FROM: https://brave.com/search/api/
+    /// This is used to find real, working URLs for content recommendations
+    static let braveAPIKey = ""
+
+    /// Optional: Override the OpenAI model (default: gpt-4o-mini)
+    static let openAIModel: String? = nil  // Set to "gpt-4o" to use GPT-4
+
+    /// Optional: Override the OpenAI base URL (default: https://api.openai.com/v1)
+    static let openAIBaseURL: String? = nil
+
+    /// OpenAI key as an optional — nil when unset (used by meeting transcription/notes)
+    static var openAIKey: String? {
+        openAIAPIKey.isEmpty ? nil : openAIAPIKey
+    }
+}
+

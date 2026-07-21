@@ -25,7 +25,7 @@ setup_env.sh
 *.local
 
 # Config file with API key
-CursorBuddyAI/Config.swift
+Nudger/Config.swift
 
 # macOS
 .DS_Store

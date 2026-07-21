@@ -2,7 +2,7 @@
 //  NudgerUITests.swift
 //  NudgerUITests
 //
-//  Created by Carl Henric Prestor on 2025-10-27.
+//  Created on 2025-10-27.
 //
 
 import XCTest
